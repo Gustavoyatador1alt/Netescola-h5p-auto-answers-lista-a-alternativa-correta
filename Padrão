@@ -1,0 +1,127 @@
+// ==UserScript==
+// @name         H5P MultiChoice - Mostrar Respostas Corretas Developer: Gustavoyatador1, versão padrão.
+// @namespace    http://tampermonkey.net/
+// @version      1.0
+// @description  Exibe automaticamente as respostas corretas de exercícios H5P.MultiChoice em qualquer site, Desenvolvido por Gustavoyatador1, EZ BYPASS LULA E SER GOIAS, no meu proximo codigo irei criar um auto answers, e um display.
+// @match        *://*/*
+// @grant        none
+// @run-at       document-end
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  // 1. Adiciona ERUDA (console visual embutido na página)
+  const erudaScript = document.createElement('script');
+  erudaScript.src = 'https://cdn.jsdelivr.net/npm/eruda';
+  erudaScript.onload = () => {
+    eruda.init();
+
+    // 2. Script H5P que extrai e mostra as respostas corretas
+    const clean = (html) =>
+      String(html || "")
+        .replace(/<[^>]*>/g, " ")
+        .replace(/&nbsp;/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const tryParse = (s) => {
+      try {
+        return typeof s === "string" ? JSON.parse(s) : s;
+      } catch {
+        return null;
+      }
+    };
+
+    const pullParams = (obj = {}) =>
+      obj.params && (obj.params.answers || obj.params.question)
+        ? obj.params
+        : obj;
+
+    const extractRows = () => {
+      const rows = [];
+
+      const pushFromParams = (source, id, raw) => {
+        const p = pullParams(raw || {});
+        const question = clean(p.question || p.prompt || p.stem || p.title || "");
+        const answers = Array.isArray(p.answers) ? p.answers : [];
+        answers.forEach((a, idx) => {
+          const correct =
+            a.correct === true ||
+            a.isCorrect === true ||
+            a.correctAnswer === true;
+          rows.push({
+            question,
+            index: idx,
+            text: clean(a.text || a.label || a.content || ""),
+            correct,
+          });
+        });
+      };
+
+      // 1) Verifica H5PIntegration
+      const HI = window.H5PIntegration;
+      if (HI?.contents) {
+        Object.entries(HI.contents).forEach(([key, val]) => {
+          const lib = String(val.library || "").split(" ")[0];
+          const isMC =
+            lib === "H5P.MultiChoice" ||
+            val.content?.mainLibrary === "H5P.MultiChoice";
+          if (isMC) {
+            const params =
+              tryParse(val.jsonContent) ||
+              val.content ||
+              tryParse(val.params) ||
+              null;
+            pushFromParams("H5PIntegration", key, params);
+          }
+        });
+      }
+
+      // 2) Verifica instâncias H5P carregadas
+      if (window.H5P && Array.isArray(window.H5P.instances)) {
+        window.H5P.instances.forEach((inst, idx) => {
+          const lib =
+            inst.libraryInfo?.machineName ||
+            inst.library?.machineName ||
+            inst?.constructor?.name;
+          if (lib === "H5P.MultiChoice") {
+            const params =
+              inst.options ||
+              inst.params ||
+              inst.contentData?.params ||
+              {};
+            pushFromParams("H5P.instances", idx, params);
+          }
+        });
+      }
+
+      return rows;
+    };
+
+    const refresh = () => {
+      const rows = extractRows();
+      if (!rows.length) {
+        console.clear();
+        console.log("⏳ Nenhuma questão H5P.MultiChoice encontrada ainda...");
+        return;
+      }
+
+      console.clear();
+
+      const corretas = rows.filter(r => r.correct);
+      corretas.forEach(r => {
+        console.log(`❓ ${r.question.slice(0, 80)}...`);
+        console.log(`✅ Resposta correta [${r.index}]: ${r.text}\n`);
+      });
+
+      window._h5pMultiChoice = corretas;
+    };
+
+    console.log("🔄 Monitor iniciado (1s). Para parar: clearInterval(window._h5pLoop)");
+    window._h5pLoop = setInterval(refresh, 1000);
+    refresh();
+  };
+
+  document.body.appendChild(erudaScript);
+})();
