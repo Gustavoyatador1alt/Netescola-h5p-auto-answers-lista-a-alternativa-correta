@@ -1,0 +1,167 @@
+// ==UserScript==
+// @name         H5P MultiChoice - Mostrar Respostas Corretas Developer: Gustavoyatador1
+// @namespace    http://tampermonkey.net/
+// @version      1.1
+// @description  Exibe automaticamente as respostas corretas de exercícios H5P.MultiChoice em qualquer site, com display, boa sorte pra me pararem goias,ez bypass KKKKKKK
+// @match        *://*/*
+// @grant        none
+// @run-at       document-end
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  // Adiciona ERUDA (console visual)
+  const erudaScript = document.createElement('script');
+  erudaScript.src = 'https://cdn.jsdelivr.net/npm/eruda';
+  erudaScript.onload = () => {
+    eruda.init();
+
+    // Função: limpa HTML
+    const clean = (html) =>
+      String(html || "")
+        .replace(/<[^>]*>/g, " ")
+        .replace(/&nbsp;/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    const tryParse = (s) => {
+      try {
+        return typeof s === "string" ? JSON.parse(s) : s;
+      } catch {
+        return null;
+      }
+    };
+
+    const pullParams = (obj = {}) =>
+      obj.params && (obj.params.answers || obj.params.question)
+        ? obj.params
+        : obj;
+
+    const extractRows = () => {
+      const rows = [];
+
+      const pushFromParams = (source, id, raw) => {
+        const p = pullParams(raw || {});
+        const question = clean(p.question || p.prompt || p.stem || p.title || "");
+        const answers = Array.isArray(p.answers) ? p.answers : [];
+        answers.forEach((a, idx) => {
+          const correct =
+            a.correct === true ||
+            a.isCorrect === true ||
+            a.correctAnswer === true;
+          rows.push({
+            question,
+            index: idx,
+            text: clean(a.text || a.label || a.content || ""),
+            correct,
+          });
+        });
+      };
+
+      const HI = window.H5PIntegration;
+      if (HI?.contents) {
+        Object.entries(HI.contents).forEach(([key, val]) => {
+          const lib = String(val.library || "").split(" ")[0];
+          const isMC =
+            lib === "H5P.MultiChoice" ||
+            val.content?.mainLibrary === "H5P.MultiChoice";
+          if (isMC) {
+            const params =
+              tryParse(val.jsonContent) ||
+              val.content ||
+              tryParse(val.params) ||
+              null;
+            pushFromParams("H5PIntegration", key, params);
+          }
+        });
+      }
+
+      if (window.H5P && Array.isArray(window.H5P.instances)) {
+        window.H5P.instances.forEach((inst, idx) => {
+          const lib =
+            inst.libraryInfo?.machineName ||
+            inst.library?.machineName ||
+            inst?.constructor?.name;
+          if (lib === "H5P.MultiChoice") {
+            const params =
+              inst.options ||
+              inst.params ||
+              inst.contentData?.params ||
+              {};
+            pushFromParams("H5P.instances", idx, params);
+          }
+        });
+      }
+
+      return rows;
+    };
+
+    // 💬 Adiciona toast visual na tela
+    function showToast(message) {
+      if (!document.getElementById('h5p-toast-container')) {
+        const container = document.createElement('div');
+        container.id = 'h5p-toast-container';
+        container.style.position = 'fixed';
+        container.style.bottom = '20px';
+        container.style.right = '20px';
+        container.style.zIndex = '9999';
+        container.style.display = 'flex';
+        container.style.flexDirection = 'column-reverse';
+        container.style.gap = '8px';
+        document.body.appendChild(container);
+      }
+
+      const toast = document.createElement('div');
+      toast.textContent = message;
+      toast.style.padding = '10px 16px';
+      toast.style.backgroundColor = '#00cc66';
+      toast.style.color = 'white';
+      toast.style.fontSize = '14px';
+      toast.style.borderRadius = '5px';
+      toast.style.boxShadow = '0 2px 10px rgba(0,0,0,0.2)';
+      toast.style.opacity = '0';
+      toast.style.transition = 'opacity 0.3s ease';
+
+      document.getElementById('h5p-toast-container').appendChild(toast);
+
+      requestAnimationFrame(() => {
+        toast.style.opacity = '1';
+      });
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 500);
+      }, 5000);
+    }
+
+    // ⏳ Loop de monitoramento das questões
+    const refresh = () => {
+      const rows = extractRows();
+      if (!rows.length) {
+        console.clear();
+        console.log("⏳ Nenhuma questão H5P.MultiChoice encontrada ainda...");
+        return;
+      }
+
+      console.clear();
+
+      const corretas = rows.filter(r => r.correct);
+      corretas.forEach(r => {
+        console.log(`❓ ${r.question.slice(0, 80)}...`);
+        console.log(`✅ Resposta correta [${r.index}]: ${r.text}\n`);
+
+        // ➕ Mensagem na tela
+        showToast(`✅ ${r.text}`);
+      });
+
+      window._h5pMultiChoice = corretas;
+    };
+
+    console.log("🔄 Monitor iniciado (1s). Para parar: clearInterval(window._h5pLoop)");
+    window._h5pLoop = setInterval(refresh, 1000);
+    refresh();
+  };
+
+  document.body.appendChild(erudaScript);
+})();
