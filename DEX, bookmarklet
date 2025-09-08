@@ -1,0 +1,89 @@
+javascript:(function(){
+  'use strict';
+  /* Eruda */
+  (function(){
+    if(window.eruda)return;
+    let s=document.createElement('script');
+    s.src='https://cdn.jsdelivr.net/npm/eruda';
+    s.onload=()=>{eruda.init()};
+    document.body.appendChild(s);
+  })();
+  /* Caixa */
+  function createBox(){
+    if(document.getElementById("h5p-box"))return;
+    let box=document.createElement("div");
+    box.id="h5p-box";
+    Object.assign(box.style,{
+      position:"fixed",top:"60px",left:"20px",minWidth:"250px",maxWidth:"400px",
+      background:"#2c3e50",color:"white",border:"2px solid #34495e",
+      borderRadius:"8px",padding:"8px 12px",fontSize:"13px",lineHeight:"1.4",
+      zIndex:"99999",cursor:"move",boxShadow:"0 2px 8px rgba(0,0,0,0.3)"
+    });
+    box.innerHTML="<b>✅ Respostas:</b><br><i>Aguardando...</i>";
+    document.body.appendChild(box);
+    dragElement(box);
+  }
+  function dragElement(el){
+    let mx=0,my=0,ox=0,oy=0;
+    el.onmousedown=e=>{
+      e.preventDefault();
+      mx=e.clientX; my=e.clientY;
+      document.onmouseup=()=>document.onmousemove=null;
+      document.onmousemove=ee=>{
+        ee.preventDefault();
+        ox=mx-ee.clientX; oy=my-ee.clientY;
+        mx=ee.clientX; my=ee.clientY;
+        el.style.top=el.offsetTop-oy+"px";
+        el.style.left=el.offsetLeft-ox+"px";
+      };
+    };
+  }
+  const clean=html=>String(html||"").replace(/<[^>]*>/g," ").replace(/&nbsp;/g," ").replace(/\s+/g," ").trim();
+  const tryParse=s=>{try{return typeof s==="string"?JSON.parse(s):s}catch{return null}};
+  const pullParams=o=>(o.params&&(o.params.answers||o.params.question))?o.params:o;
+  function extractRows(){
+    let rows=[];
+    function push(raw){
+      let p=pullParams(raw||{}),q=clean(p.question||p.prompt||p.stem||p.title||""),answers=Array.isArray(p.answers)?p.answers:[];
+      answers.forEach((a,i)=>{
+        rows.push({question:q,idx:i,letter:String.fromCharCode(65+i),text:clean(a.text||a.label||a.content||""),correct:!!a.correct});
+      });
+    }
+    let HI=window.H5PIntegration;
+    if(HI?.contents)Object.values(HI.contents).forEach(v=>{
+      if(String(v.library||"").split(" ")[0]==="H5P.MultiChoice"){
+        push(tryParse(v.jsonContent)||v.content||tryParse(v.params));
+      }
+    });
+    if(window.H5P&&Array.isArray(window.H5P.instances))window.H5P.instances.forEach(inst=>{
+      if((inst.libraryInfo?.machineName||inst.library?.machineName||inst.constructor?.name)==="H5P.MultiChoice")
+        push(inst.options||inst.params||inst.contentData?.params);
+    });
+    return rows;
+  }
+  function autoAnswer(corretas){
+    document.querySelectorAll(".h5p-answer").forEach(opt=>{
+      corretas.forEach(r=>{
+        if(opt.innerText.trim().includes(r.text)&&!opt.classList.contains("answered")){
+          opt.classList.add("answered"); opt.click(); console.log("🔘 Marcando:",r.text);
+        }
+      });
+    });
+    let btn=document.querySelector(".h5p-question-check-answer");
+    if(btn){btn.click();console.log("✅ Cliquei em Verificar");}
+  }
+  function refreshBox(){
+    let box=document.getElementById("h5p-box");
+    if(!box)return;
+    let rows=extractRows();
+    if(!rows.length){box.innerHTML="<b>✅ Respostas:</b><br><i>Nenhuma encontrada...</i>";return;}
+    let html="<b>✅ Respostas:</b><br><table style='width:100%; font-size:12px; border-collapse:collapse;'>";
+    rows.forEach(r=>html+=`<tr><td style="width:20px;">${r.correct?"✅":"❌"}</td><td style="width:20px;">${r.letter}</td><td>${r.text}</td></tr>`);
+    html+="</table>";
+    box.innerHTML=html;
+    let corretas=rows.filter(r=>r.correct);
+    if(corretas.length)autoAnswer(corretas);
+  }
+  createBox();
+  setInterval(refreshBox,1000);
+})();
