@@ -3,6 +3,7 @@
 // @namespace    http://tampermonkey.net/
 // @version      2.3
 // @description  Mostra respostas corretas (A,B,C,D...), tabela no menu, marca automaticamente(desenvolvimento) e abre console Eruda, Feito por Gustavoyatador1
+// @author       Gustavoyatador1
 // @match        https://sergoias.portal.sagreseduca.com.br/*
 // @match        https://portalnetescola.educacao.go.gov.br/*
 // @grant        none
@@ -190,3 +191,4 @@
   createBox();
   setInterval(refreshBox, 1000);
 })();
+// Script desenvolvido por Gustavoyatador1 🚀
