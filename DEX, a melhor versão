@@ -1,11 +1,12 @@
 // ==UserScript==
-// @name         H5P MultiChoice - Caixinha + Eruda
+// @name         H5P MultiChoice - Caixinha + AutoAnswer + Eruda + Tabela Letras
 // @namespace    http://tampermonkey.net/
-// @version      1.4
-// @description  Mostra respostas corretas em caixinha arrastável + console Eruda desbloqueado
+// @version      2.3
+// @description  Mostra respostas corretas (A,B,C,D...), tabela no menu, marca automaticamente(desenvolvimento) e abre console Eruda, Feito por Gustavoyatador1
 // @match        *://*/*
 // @grant        none
 // @run-at       document-end
+// @allFrames    true
 // ==/UserScript==
 
 (function () {
@@ -28,15 +29,15 @@
     box.style.position = "fixed";
     box.style.top = "60px";
     box.style.left = "20px";
-    box.style.minWidth = "180px";
-    box.style.maxWidth = "300px";
-    box.style.background = "#e74c3c";
+    box.style.minWidth = "250px";
+    box.style.maxWidth = "400px";
+    box.style.background = "#2c3e50";
     box.style.color = "white";
-    box.style.border = "2px solid #c0392b";
-    box.style.borderRadius = "6px";
-    box.style.padding = "6px 10px";
+    box.style.border = "2px solid #34495e";
+    box.style.borderRadius = "8px";
+    box.style.padding = "8px 12px";
     box.style.fontSize = "13px";
-    box.style.lineHeight = "1.3";
+    box.style.lineHeight = "1.4";
     box.style.zIndex = "99999";
     box.style.cursor = "move";
     box.style.boxShadow = "0 2px 8px rgba(0,0,0,0.3)";
@@ -99,7 +100,8 @@
           a.correctAnswer === true;
         rows.push({
           question,
-          index: idx,
+          idx,
+          letter: String.fromCharCode(65 + idx), // 0=A, 1=B, 2=C, 3=D...
           text: clean(a.text || a.label || a.content || ""),
           correct,
         });
@@ -129,29 +131,61 @@
     return rows;
   };
 
+  // 🔘 Marca automaticamente as corretas
+  function autoAnswer(corretas) {
+    const options = document.querySelectorAll(".h5p-answer");
+    corretas.forEach(r => {
+      options.forEach(opt => {
+        const text = opt.innerText.trim();
+        if (text.includes(r.text)) {
+          if (!opt.classList.contains("answered")) {
+            opt.classList.add("answered");
+            opt.click(); // simula clique
+            console.log("🔘 Marcando:", text);
+          }
+        }
+      });
+    });
+
+    // clicar em "Verificar"
+    const checkBtn = document.querySelector(".h5p-question-check-answer");
+    if (checkBtn) {
+      checkBtn.click();
+      console.log("✅ Cliquei em Verificar");
+    }
+  }
+
   // atualiza a caixinha (limpando antes)
   function refreshBox() {
     const box = document.getElementById("h5p-box");
     if (!box) return;
     const rows = extractRows();
-    const corretas = rows.filter(r => r.correct);
 
-    if (!corretas.length) {
+    if (!rows.length) {
       box.innerHTML = "<b>✅ Respostas:</b><br><i>Nenhuma encontrada...</i>";
       return;
     }
 
-    box.innerHTML = "<b>✅ Respostas:</b><br>";
-    corretas.forEach(r => {
-      box.innerHTML += `<div style="margin:2px 0;">${r.text}</div>`;
+    let html = "<b>✅ Respostas:</b><br>";
+    html += "<table style='width:100%; font-size:12px; border-collapse:collapse;'>";
+    rows.forEach(r => {
+      html += `
+        <tr>
+          <td style="width:20px;">${r.correct ? "✅" : "❌"}</td>
+          <td style="width:20px;">${r.letter}</td>
+          <td>${r.text}</td>
+        </tr>`;
     });
+    html += "</table>";
 
-    // loga no Eruda também
-    console.clear();
-    corretas.forEach(r => console.log("✅", r.text));
+    box.innerHTML = html;
+
+    // pega apenas as corretas e responde
+    const corretas = rows.filter(r => r.correct);
+    if (corretas.length) autoAnswer(corretas);
   }
 
   // inicia
   createBox();
-  setInterval(refreshBox, 1500);
+  setInterval(refreshBox, 1000);
 })();
