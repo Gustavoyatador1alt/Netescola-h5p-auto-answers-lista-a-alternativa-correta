@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         H5P MultiChoice - Responde automaticamente(deu trabalho essa porra KKKKKKK)
+// @name         H5P MultiChoice - Responde e avança automaticamente
 // @namespace    http://tampermonkey.net/
-// @version      3.1
-// @description  Marca respostas corretas e clica no botão Avançar automaticamente no H5P MultiChoice (mesmo em iframes same-origin).
+// @version      3.2
+// @description  Marca respostas corretas e clica no botão Avançar automaticamente no H5P MultiChoice (mesmo em iframes same-origin). Clica no botão Avançar inicial para liberar vídeo/conteúdo.
 // @author       Gustavoyatador1
 // @match        https://sergoias.portal.sagreseduca.com.br/*
 // @match        https://portalnetescola.educacao.go.gov.br/*
@@ -30,7 +30,6 @@
 
   function normalize(s){ return String(s||"").toLowerCase().replace(/\s+/g," ").trim(); }
 
-  // 📦 Cria a caixinha
   function createBox(doc = document) {
     if (doc.getElementById("h5p-box")) return doc.getElementById("h5p-box");
     const box = doc.createElement("div");
@@ -67,12 +66,12 @@
     }
     function elementDrag(e) {
       e.preventDefault();
-      offsetX = mouseX - e.clientX;
-      offsetY = mouseY - e.clientY;
+      const dx = mouseX - e.clientX;
+      const dy = mouseY - e.clientY;
       mouseX = e.clientX;
       mouseY = e.clientY;
-      el.style.top = (el.offsetTop - offsetY) + "px";
-      el.style.left = (el.offsetLeft - offsetX) + "px";
+      el.style.top = (el.offsetTop - dy) + "px";
+      el.style.left = (el.offsetLeft - dx) + "px";
     }
     function closeDragElement() {
       document.onmouseup = null;
@@ -80,7 +79,6 @@
     }
   }
 
-  // 🔍 Extrai respostas
   function extractRows(doc = document) {
     const rows = [];
     const pushFromParams = (raw) => {
@@ -124,7 +122,6 @@
     return rows;
   }
 
-  // ✅ Marca automaticamente
   function autoAnswer(rows, doc = document) {
     const corretas = rows.filter(r => r.correct);
     const options = doc.querySelectorAll(".h5p-answer, .h5p-multi-choice-answer");
@@ -145,16 +142,13 @@
     if (checkBtn && !checkBtn.disabled) checkBtn.click();
   }
 
-  // ⏳ Checa se já respondeu (botão submit sumiu)
   function responded(doc = document) {
     return !doc.querySelector(".h5p-question-check-answer, .h5p-multi-choice-submit");
   }
 
-  // ▶️ Clica no botão "Avançar"
   function autoClickNext(doc = document) {
     if (!responded(doc)) return;
 
-    // Ajuste o seletor aqui caso mude o botão
     const nextBtn = doc.querySelector("button.nui-button.nui-button-medium.nui-button-curved.nui-button-solid.nui-button-primary");
     if (nextBtn && !nextBtn.disabled) {
       console.log("▶️ Clicando no botão Avançar");
@@ -162,65 +156,55 @@
     }
   }
 
-  // 🔁 Atualiza UI + marca + avança
-  function refresh(doc = document) {
-    const box = createBox(doc);
-    const rows = extractRows(doc);
+  function clickInitialAdvance(doc = document) {
+    const btn = doc.querySelector("button.nui-button.nui-button-medium.nui-button-curved.nui-button-solid.nui-button-primary");
+    if (btn && !btn.disabled) {
+      console.log("▶️ Clicando no botão inicial Avançar");
+      btn.click();
+      return true;
+    }
+    return false;
+  }
 
+  function refresh(doc = document) {
+    if (clickInitialAdvance(doc)) return;
+    const rows = extractRows(doc);
     if (!rows.length) {
+      const box = createBox(doc);
       box.innerHTML = "<b>✅ H5P:</b><br><i>Nada encontrado.</i>";
       return;
     }
-
-    let html = "<b>✅ H5P:</b><br>";
-    html += "<table style='width:100%; font-size:12px;'>";
-    rows.forEach(r => {
-      html += `
-        <tr>
-          <td>${r.correct ? "✅" : "❌"}</td>
-          <td>${r.letter}</td>
-          <td>${r.text}</td>
-        </tr>`;
+    autoAnswer(rows, doc);
+    setTimeout(() => autoClickNext(doc), 1500);
+    const box = createBox(doc);
+    let html = "<b>✅ H5P:</b><br><table style='width:100%; font-size:12px;'>";
+    rows.forEach((r) => {
+      html += `<tr><td>${r.correct ? "✅" : "❌"}</td><td>${r.letter}</td><td>${r.text}</td></tr>`;
     });
     html += "</table>";
-
     box.innerHTML = html;
-
-    autoAnswer(rows, doc);
-
-    setTimeout(() => autoClickNext(doc), 1500);
   }
 
-  // 🎯 Executa dentro do frame
-  function runInThisDocument() {
-    console.log("🧠 Script H5P ativo em:", location.href);
-    setInterval(() => refresh(document), 2000);
-  }
-
-  // 🔁 Executa em iframes
-  function injectIntoIframes() {
-    const iframes = document.querySelectorAll("iframe");
-    iframes.forEach((iframe) => {
+  function scanIframe() {
+    document.querySelectorAll("iframe").forEach((frame) => {
       try {
-        const idoc = iframe.contentDocument;
-        if (!idoc) return;
-        refresh(idoc);
+        const doc = frame.contentDocument;
+        if (!doc) return;
+        refresh(doc);
+        doc.addEventListener("DOMContentLoaded", () => refresh(doc));
         console.log("🔄 Injetado em iframe (same-origin)");
-        idoc.addEventListener("DOMContentLoaded", () => refresh(idoc));
       } catch (e) {
         console.warn("⚠️ Iframe bloqueado por CORS:", e);
       }
     });
   }
 
-  // 🚀 Init principal
-  if (window.top !== window.self) {
-    // Dentro de iframe
-    runInThisDocument();
-  } else {
-    // Documento pai
-    runInThisDocument();
-    setInterval(injectIntoIframes, 3000);
+  function init() {
+    console.log("🧠 Script H5P ativo em:", location.href);
+    refresh(document);
+    setInterval(() => refresh(document), 2000);
+    setInterval(scanIframe, 3000);
   }
 
+  init();
 })();
