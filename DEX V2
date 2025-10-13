@@ -1,0 +1,226 @@
+// ==UserScript==
+// @name         H5P MultiChoice - Responde automaticamente(deu trabalho essa porra KKKKKKK)
+// @namespace    http://tampermonkey.net/
+// @version      3.1
+// @description  Marca respostas corretas e clica no botão Avançar automaticamente no H5P MultiChoice (mesmo em iframes same-origin).
+// @author       Gustavoyatador1
+// @match        https://sergoias.portal.sagreseduca.com.br/*
+// @match        https://portalnetescola.educacao.go.gov.br/*
+// @grant        none
+// @run-at       document-end
+// @allFrames    true
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  const clean = (html) =>
+    String(html || "")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/&nbsp;/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const tryParse = (s) => {
+    try { return typeof s === "string" ? JSON.parse(s) : s; } catch { return null; }
+  };
+
+  const pullParams = (obj = {}) =>
+    obj.params && (obj.params.answers || obj.params.question) ? obj.params : obj;
+
+  function normalize(s){ return String(s||"").toLowerCase().replace(/\s+/g," ").trim(); }
+
+  // 📦 Cria a caixinha
+  function createBox(doc = document) {
+    if (doc.getElementById("h5p-box")) return doc.getElementById("h5p-box");
+    const box = doc.createElement("div");
+    box.id = "h5p-box";
+    box.style.position = "fixed";
+    box.style.top = "60px";
+    box.style.left = "20px";
+    box.style.minWidth = "250px";
+    box.style.maxWidth = "400px";
+    box.style.background = "#2c3e50";
+    box.style.color = "white";
+    box.style.border = "2px solid #34495e";
+    box.style.borderRadius = "8px";
+    box.style.padding = "8px 12px";
+    box.style.fontSize = "13px";
+    box.style.lineHeight = "1.4";
+    box.style.zIndex = "999999";
+    box.style.boxShadow = "0 2px 8px rgba(0,0,0,0.3)";
+    box.innerHTML = "<b>✅ H5P:</b><br><i>Aguardando...</i>";
+    doc.body.appendChild(box);
+    makeDraggable(box);
+    return box;
+  }
+
+  function makeDraggable(el) {
+    let offsetX = 0, offsetY = 0, mouseX = 0, mouseY = 0;
+    el.onmousedown = dragMouseDown;
+    function dragMouseDown(e) {
+      e.preventDefault();
+      mouseX = e.clientX;
+      mouseY = e.clientY;
+      document.onmouseup = closeDragElement;
+      document.onmousemove = elementDrag;
+    }
+    function elementDrag(e) {
+      e.preventDefault();
+      offsetX = mouseX - e.clientX;
+      offsetY = mouseY - e.clientY;
+      mouseX = e.clientX;
+      mouseY = e.clientY;
+      el.style.top = (el.offsetTop - offsetY) + "px";
+      el.style.left = (el.offsetLeft - offsetX) + "px";
+    }
+    function closeDragElement() {
+      document.onmouseup = null;
+      document.onmousemove = null;
+    }
+  }
+
+  // 🔍 Extrai respostas
+  function extractRows(doc = document) {
+    const rows = [];
+    const pushFromParams = (raw) => {
+      const p = pullParams(raw || {});
+      const question = clean(p.question || p.prompt || p.stem || p.title || "");
+      const answers = Array.isArray(p.answers) ? p.answers : [];
+      answers.forEach((a, idx) => {
+        const correct = a.correct === true || a.isCorrect === true || a.correctAnswer === true;
+        rows.push({
+          question,
+          idx,
+          letter: String.fromCharCode(65 + idx),
+          text: clean(a.text || a.label || a.content || ""),
+          correct,
+        });
+      });
+    };
+
+    const HI = doc.defaultView?.H5PIntegration;
+    if (HI?.contents) {
+      Object.values(HI.contents).forEach((val) => {
+        const lib = String(val.library || "").split(" ")[0];
+        if (lib === "H5P.MultiChoice") {
+          const params = tryParse(val.jsonContent) || val.content || tryParse(val.params) || null;
+          pushFromParams(params);
+        }
+      });
+    }
+
+    const H5P = doc.defaultView?.H5P;
+    if (H5P && Array.isArray(H5P.instances)) {
+      H5P.instances.forEach((inst) => {
+        const lib = inst.libraryInfo?.machineName || inst.library?.machineName || inst?.constructor?.name;
+        if (lib === "H5P.MultiChoice") {
+          const params = inst.options || inst.params || inst.contentData?.params || {};
+          pushFromParams(params);
+        }
+      });
+    }
+
+    return rows;
+  }
+
+  // ✅ Marca automaticamente
+  function autoAnswer(rows, doc = document) {
+    const corretas = rows.filter(r => r.correct);
+    const options = doc.querySelectorAll(".h5p-answer, .h5p-multi-choice-answer");
+    corretas.forEach(r => {
+      options.forEach(opt => {
+        const text = (opt.innerText || opt.textContent || "").trim();
+        if (normalize(text) === normalize(r.text) || text.includes(r.text)) {
+          if (!opt.classList.contains("answered")) {
+            opt.click();
+            opt.classList.add("answered");
+            console.log("🟢 Marcando:", text);
+          }
+        }
+      });
+    });
+
+    const checkBtn = doc.querySelector(".h5p-question-check-answer, .h5p-multi-choice-submit");
+    if (checkBtn && !checkBtn.disabled) checkBtn.click();
+  }
+
+  // ⏳ Checa se já respondeu (botão submit sumiu)
+  function responded(doc = document) {
+    return !doc.querySelector(".h5p-question-check-answer, .h5p-multi-choice-submit");
+  }
+
+  // ▶️ Clica no botão "Avançar"
+  function autoClickNext(doc = document) {
+    if (!responded(doc)) return;
+
+    // Ajuste o seletor aqui caso mude o botão
+    const nextBtn = doc.querySelector("button.nui-button.nui-button-medium.nui-button-curved.nui-button-solid.nui-button-primary");
+    if (nextBtn && !nextBtn.disabled) {
+      console.log("▶️ Clicando no botão Avançar");
+      nextBtn.click();
+    }
+  }
+
+  // 🔁 Atualiza UI + marca + avança
+  function refresh(doc = document) {
+    const box = createBox(doc);
+    const rows = extractRows(doc);
+
+    if (!rows.length) {
+      box.innerHTML = "<b>✅ H5P:</b><br><i>Nada encontrado.</i>";
+      return;
+    }
+
+    let html = "<b>✅ H5P:</b><br>";
+    html += "<table style='width:100%; font-size:12px;'>";
+    rows.forEach(r => {
+      html += `
+        <tr>
+          <td>${r.correct ? "✅" : "❌"}</td>
+          <td>${r.letter}</td>
+          <td>${r.text}</td>
+        </tr>`;
+    });
+    html += "</table>";
+
+    box.innerHTML = html;
+
+    autoAnswer(rows, doc);
+
+    setTimeout(() => autoClickNext(doc), 1500);
+  }
+
+  // 🎯 Executa dentro do frame
+  function runInThisDocument() {
+    console.log("🧠 Script H5P ativo em:", location.href);
+    setInterval(() => refresh(document), 2000);
+  }
+
+  // 🔁 Executa em iframes
+  function injectIntoIframes() {
+    const iframes = document.querySelectorAll("iframe");
+    iframes.forEach((iframe) => {
+      try {
+        const idoc = iframe.contentDocument;
+        if (!idoc) return;
+        refresh(idoc);
+        console.log("🔄 Injetado em iframe (same-origin)");
+        idoc.addEventListener("DOMContentLoaded", () => refresh(idoc));
+      } catch (e) {
+        console.warn("⚠️ Iframe bloqueado por CORS:", e);
+      }
+    });
+  }
+
+  // 🚀 Init principal
+  if (window.top !== window.self) {
+    // Dentro de iframe
+    runInThisDocument();
+  } else {
+    // Documento pai
+    runInThisDocument();
+    setInterval(injectIntoIframes, 3000);
+  }
+
+})();
