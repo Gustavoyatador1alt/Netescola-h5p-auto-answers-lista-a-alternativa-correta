@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         H5P MultiChoice - Responde e avança automaticamente
 // @namespace    http://tampermonkey.net/
-// @version      3.2
-// @description  Marca respostas corretas e clica no botão Avançar automaticamente no H5P MultiChoice (mesmo em iframes same-origin). Clica no botão Avançar inicial para liberar vídeo/conteúdo.
+// @version      3.3
+// @description  Marca respostas corretas e clica no botão Avançar automaticamente no H5P MultiChoice (mesmo em iframes same-origin). Clica no botão Avançar inicial para liberar vídeo/conteúdo. Ignora botões de "Avaliar experiência".
 // @author       Gustavoyatador1
 // @match        https://sergoias.portal.sagreseduca.com.br/*
 // @match        https://portalnetescola.educacao.go.gov.br/*
@@ -28,7 +28,7 @@
   const pullParams = (obj = {}) =>
     obj.params && (obj.params.answers || obj.params.question) ? obj.params : obj;
 
-  function normalize(s){ return String(s||"").toLowerCase().replace(/\s+/g," ").trim(); }
+  const normalize = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
 
   function createBox(doc = document) {
     if (doc.getElementById("h5p-box")) return doc.getElementById("h5p-box");
@@ -48,7 +48,7 @@
     box.style.lineHeight = "1.4";
     box.style.zIndex = "999999";
     box.style.boxShadow = "0 2px 8px rgba(0,0,0,0.3)";
-    box.innerHTML = "<b>✅ H5P:</b><br><i>Aguardando...</i>";
+    box.innerHTML = "<b>✅ Respostas:</b><br><i>Aguardando...</i>";
     doc.body.appendChild(box);
     makeDraggable(box);
     return box;
@@ -142,24 +142,35 @@
     if (checkBtn && !checkBtn.disabled) checkBtn.click();
   }
 
-  function responded(doc = document) {
-    return !doc.querySelector(".h5p-question-check-answer, .h5p-multi-choice-submit");
-  }
+  const responded = (doc = document) =>
+    !doc.querySelector(".h5p-question-check-answer, .h5p-multi-choice-submit");
 
   function autoClickNext(doc = document) {
     if (!responded(doc)) return;
 
-    const nextBtn = doc.querySelector("button.nui-button.nui-button-medium.nui-button-curved.nui-button-solid.nui-button-primary");
+    const nextBtn = Array.from(
+      doc.querySelectorAll("button.nui-button.nui-button-medium.nui-button-curved.nui-button-solid.nui-button-primary")
+    ).find(b => {
+      const t = (b.innerText || "").toLowerCase();
+      return !t.includes("avaliar") && !t.includes("experiência");
+    });
+
     if (nextBtn && !nextBtn.disabled) {
-      console.log("▶️ Clicando no botão Avançar");
+      console.log("▶️ Clicando no botão Avançar (filtrado)");
       nextBtn.click();
     }
   }
 
   function clickInitialAdvance(doc = document) {
-    const btn = doc.querySelector("button.nui-button.nui-button-medium.nui-button-curved.nui-button-solid.nui-button-primary");
+    const btn = Array.from(
+      doc.querySelectorAll("button.nui-button.nui-button-medium.nui-button-curved.nui-button-solid.nui-button-primary")
+    ).find(b => {
+      const t = (b.innerText || "").toLowerCase();
+      return !t.includes("avaliar") && !t.includes("experiência");
+    });
+
     if (btn && !btn.disabled) {
-      console.log("▶️ Clicando no botão inicial Avançar");
+      console.log("▶️ Clicando no botão inicial Avançar (filtrado)");
       btn.click();
       return true;
     }
