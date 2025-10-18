@@ -189,6 +189,6 @@
 
   // inicia
   createBox();
-  setInterval(refreshBox, 1000);
+  setInterval(refreshBox, 500);
 })();
 // Script desenvolvido por Gustavoyatador1 🚀
