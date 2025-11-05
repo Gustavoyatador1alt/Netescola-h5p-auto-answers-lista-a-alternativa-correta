@@ -222,8 +222,8 @@
   function init() {
     console.log("🧠 Script H5P ativo em:", location.href);
     refresh(document);
-    setInterval(() => refresh(document), 500);
-    setInterval(scanIframe, 700);
+    setInterval(() => refresh(document), 1500);
+    setInterval(scanIframe, 2000);
   }
 
   init();
