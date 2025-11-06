@@ -1,0 +1,194 @@
+// ==UserScript==
+// @name         DEX V3
+// @namespace    http://tampermonkey.net/
+// @version      3.5
+// @description  Marca respostas corretas (MultiChoice e SingleChoice) e clica no botão Avançar automaticamente no H5P. Funciona em iframes same-origin. Ignora botões de "Avaliar experiência". Mostra respostas detectadas em uma caixa flutuante.
+// @author       Gustavoyatador1
+// @match        https://sergoias.portal.sagreseduca.com.br/*
+// @match        https://portalnetescola.educacao.go.gov.br/*
+// @grant        none
+// @run-at       document-end
+// @allFrames    true
+// ==/UserScript==
+
+(function () {
+  'use strict';
+
+  // 🚀 Injetar Eruda (console visual)
+  (function addEruda() {
+    if (window.eruda) return;
+    const script = document.createElement('script');
+    script.src = "https://cdn.jsdelivr.net/npm/eruda";
+    script.onload = () => { eruda.init(); };
+    document.body.appendChild(script);
+  })();
+
+  // 🧠 Funções auxiliares
+  const clean = (html) => html?.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim() || "";
+  const tryParse = (s) => { try { return typeof s === "string" ? JSON.parse(s) : s; } catch { return null; } };
+  const pullParams = (obj = {}) => obj.params && (obj.params.answers || obj.params.question) ? obj.params : obj;
+  const normalize = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+  // 🧱 Caixa de status flutuante
+  function createBox(doc = document) {
+    let box = doc.getElementById("h5p-box");
+    if (!box) {
+      box = doc.createElement("div");
+      box.id = "h5p-box";
+      Object.assign(box.style, {
+        position: "fixed", top: "60px", left: "20px", minWidth: "250px", maxWidth: "400px", background: "#2c3e50", color: "white",
+        border: "2px solid #34495e", borderRadius: "8px", padding: "8px 12px", fontSize: "13px", lineHeight: "1.4",
+        zIndex: "999999", boxShadow: "0 2px 8px rgba(0,0,0,0.3)"
+      });
+      doc.body.appendChild(box);
+    }
+    return box;
+  }
+
+  // 🧩 Extração de respostas
+  function extractRows(doc = document) {
+    const rows = [];
+
+    const pushFromParams = (raw) => {
+      const p = pullParams(raw || {});
+      const question = clean(p.question || p.prompt || p.stem || p.title || "");
+      const answers = Array.isArray(p.answers) ? p.answers : [];
+      answers.forEach((a, idx) => {
+        const correct = a.correct === true || a.isCorrect === true || a.correctAnswer === true;
+        rows.push({
+          question,
+          idx,
+          letter: String.fromCharCode(65 + idx),
+          text: clean(a.text || a.label || a.content || ""),
+          correct,
+          type: "H5P.MultiChoice"
+        });
+      });
+    };
+
+    const HI = doc.defaultView?.H5PIntegration;
+    if (HI?.contents) {
+      Object.values(HI.contents).forEach((val) => {
+        const lib = String(val.library || "").split(" ")[0];
+        if (lib === "H5P.MultiChoice") {
+          const params = tryParse(val.jsonContent) || val.content || tryParse(val.params) || null;
+          pushFromParams(params);
+        }
+      });
+    }
+
+    const H5P = doc.defaultView?.H5P;
+    if (H5P && Array.isArray(H5P.instances)) {
+      H5P.instances.forEach((inst) => {
+        const lib = inst.libraryInfo?.machineName || inst.library?.machineName || inst?.constructor?.name;
+        if (["H5P.MultiChoice", "H5P.SingleChoice"].includes(lib)) {
+          const params = inst.options || inst.params || inst.contentData?.params || {};
+          pushFromParams(params);
+        }
+      });
+    }
+
+    // Adição de suporte a <li class="h5p-sc-alternative ...">
+    doc.querySelectorAll("li.h5p-sc-alternative").forEach((li, i) => {
+      const correct = li.classList.contains("h5p-sc-is-correct");
+      rows.push({
+        question: "SingleChoice (DOM)",
+        idx: i,
+        letter: String.fromCharCode(65 + i),
+        text: clean(li.innerText || ""),
+        correct,
+        type: "H5P.SingleChoice"
+      });
+    });
+
+    return rows;
+  }
+
+  // 🧠 Marca respostas corretas automaticamente
+  function autoAnswer(rows, doc = document) {
+    // Marca automaticamente as alternativas corretas
+    doc.querySelectorAll('.h5p-sc-alternative.h5p-sc-is-correct')
+      .forEach(el => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
+
+    const checkBtn = doc.querySelector(".h5p-question-check-answer, .h5p-multi-choice-submit, .h5p-sc-next");
+    if (checkBtn && !checkBtn.disabled) checkBtn.click();
+  }
+
+  const responded = (doc = document) =>
+    !doc.querySelector(".h5p-question-check-answer, .h5p-multi-choice-submit, .h5p-sc-next");
+
+  // ▶️ Clicar no botão Avançar
+  function autoClickNext(doc = document) {
+    if (!responded(doc)) return;
+    const nextBtn = Array.from(
+      doc.querySelectorAll("button.nui-button.nui-button-medium.nui-button-curved.nui-button-solid.nui-button-primary")
+    ).find(b => !b.innerText.toLowerCase().includes("avaliar") && !b.innerText.toLowerCase().includes("experiência"));
+
+    if (nextBtn && !nextBtn.disabled) {
+      console.log("▶️ Clicando no botão Avançar (filtrado)");
+      nextBtn.click();
+    }
+  }
+
+  function clickInitialAdvance(doc = document) {
+    const btn = Array.from(
+      doc.querySelectorAll("button.nui-button.nui-button-medium.nui-button-curved.nui-button-solid.nui-button-primary")
+    ).find(b => !b.innerText.toLowerCase().includes("avaliar") && !b.innerText.toLowerCase().includes("experiência"));
+
+    if (btn && !btn.disabled) {
+      console.log("▶️ Clicando no botão inicial Avançar (filtrado)");
+      btn.click();
+      return true;
+    }
+    return false;
+  }
+
+  // 🔁 Atualiza a interface e marca respostas
+  function refresh(doc = document) {
+    if (clickInitialAdvance(doc)) return;
+    const rows = extractRows(doc);
+    const box = createBox(doc);
+
+    if (!rows.length) {
+      box.innerHTML = "<b>✅ H5P:</b><br><i>Nenhuma questão encontrada.</i>";
+      return;
+    }
+
+    autoAnswer(rows, doc);
+    setTimeout(() => autoClickNext(doc), 1500);
+
+    // Ordenar as respostas por letra (A, B, C, D) para garantir que fiquem organizadas
+    rows.sort((a, b) => ['A', 'B', 'C', 'D'].indexOf(a.letter) - ['A', 'B', 'C', 'D'].indexOf(b.letter));
+
+    let html = "<b>✅ H5P Detectado:</b><br><table style='width:100%; font-size:12px;'>";
+    rows.forEach((r) => {
+      html += `<tr><td>${r.correct ? "✅" : "❌"}</td><td>${r.letter})</td><td>${r.text}</td><td style="opacity:0.6;">(${r.type})</td></tr>`;
+    });
+    html += "</table>";
+    box.innerHTML = html;
+  }
+
+  function scanIframe() {
+    document.querySelectorAll("iframe").forEach((frame) => {
+      try {
+        const doc = frame.contentDocument;
+        if (!doc) return;
+        refresh(doc);
+        doc.addEventListener("DOMContentLoaded", () => refresh(doc));
+        console.log("🔄 Injetado em iframe (same-origin)");
+      } catch (e) {
+        console.warn("⚠️ Iframe bloqueado por CORS:", e);
+      }
+    });
+  }
+
+  // 🚀 Inicialização
+  function init() {
+    console.log("🧠 Script H5P ativo em:", location.href);
+    refresh(document);
+    setInterval(() => refresh(document), 1000);
+    setInterval(scanIframe, 1500);
+  }
+
+  init();
+})();
