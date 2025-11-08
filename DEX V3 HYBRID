@@ -104,18 +104,23 @@
     return rows;
   }
 
-  // 🧠 Marca respostas corretas automaticamente
-  function autoAnswer(rows, doc = document) {
-    // Marca automaticamente as alternativas corretas
-    doc.querySelectorAll('.h5p-sc-alternative.h5p-sc-is-correct')
-      .forEach(el => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })));
-
-    const checkBtn = doc.querySelector(".h5p-question-check-answer, .h5p-multi-choice-submit, .h5p-sc-next");
-    if (checkBtn && !checkBtn.disabled) checkBtn.click();
+// 🧠 Marca respostas corretas automaticamente
+function autoAnswer(rows, doc = document) {
+  // Só executa se existir pelo menos uma alternativa com a classe correta
+  const correctEls = doc.querySelectorAll('.h5p-sc-alternative.h5p-sc-is-correct');
+  if (correctEls.length > 0) {
+    correctEls.forEach(el =>
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    );
   }
 
-  const responded = (doc = document) =>
-    !doc.querySelector(".h5p-question-check-answer, .h5p-multi-choice-submit, .h5p-sc-next");
+  // Só clica no botão se ele existir
+  const checkBtn = doc.querySelector(".h5p-question-check-answer, .h5p-multi-choice-submit, .h5p-sc-next");
+  if (checkBtn && !checkBtn.disabled) {
+    checkBtn.click();
+  }
+}
+
 
   // ▶️ Clicar no botão Avançar
   function autoClickNext(doc = document) {
