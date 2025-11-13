@@ -1,11 +1,11 @@
 // ==UserScript==
-// @name         DEX V3
+// @name         DEX V3 (suporte base64 imagens)
 // @namespace    http://tampermonkey.net/
-// @version      3.5
-// @description  Marca respostas corretas (MultiChoice e SingleChoice) e clica no botão Avançar automaticamente no H5P. Funciona em iframes same-origin. Ignora botões de "Avaliar experiência". Mostra respostas detectadas em uma caixa flutuante.
-// @author       Gustavoyatador1
+// @version      3.6
+// @description  Marca respostas corretas (MultiChoice e SingleChoice) incluindo alternativas que usam imagens em data:image/base64 e avança automaticamente no H5P.
+// @author       Gustavoyatador
 // @match        https://sergoias.portal.sagreseduca.com.br/*
-// @match        https://portalnetescola.educacao.go.gov.br/*
+// @match        https://sergoias.portal.sagreseduca.com.br/*
 // @grant        none
 // @run-at       document-end
 // @allFrames    true
@@ -19,35 +19,110 @@
     if (window.eruda) return;
     const script = document.createElement('script');
     script.src = "https://cdn.jsdelivr.net/npm/eruda";
-    script.onload = () => { eruda.init(); };
+    script.onload = () => { try { eruda.init(); } catch {} };
     document.body.appendChild(script);
   })();
+// 🔧 Melhor limpeza e normalização de texto
+const clean = (html) => {
+  if (!html) return "";
+  // Mantém o conteúdo de sup/sub com marcação visual simples
+  let text = html
+    .replace(/<sup>(.*?)<\/sup>/gi, "^($1)")   // transforma ²³⁸U → ^(238)U
+    .replace(/<sub>(.*?)<\/sub>/gi, "_($1)")   // subscrito (química)
+    .replace(/<img[^>]+alt="([^"]*)"[^>]*>/gi, " $1 ") // imagem com alt
+    .replace(/<img[^>]+>/gi, "[img]")          // imagem sem alt
+    .replace(/&nbsp;/g, " ")
+    .replace(/<[^>]*>/g, " ")                  // remove tags restantes
+    .replace(/\s+/g, " ")
+    .trim();
+  return text;
+};
 
-  // 🧠 Funções auxiliares
-  const clean = (html) => html?.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim() || "";
-  const tryParse = (s) => { try { return typeof s === "string" ? JSON.parse(s) : s; } catch { return null; } };
-  const pullParams = (obj = {}) => obj.params && (obj.params.answers || obj.params.question) ? obj.params : obj;
-  const normalize = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+const tryParse = (s) => {
+  try { return typeof s === "string" ? JSON.parse(s) : s; }
+  catch { return null; }
+};
+
+const pullParams = (obj = {}) =>
+  obj.params && (obj.params.answers || obj.params.question) ? obj.params : obj;
+
+// 🔡 Normaliza texto pra comparação robusta
+const normalize = (s) =>
+  String(s || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}^_()]+/gu, " ") // mantém letras, números, ^ e _
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // nova: fingerprint curta de base64 (para comparar imagens data:)
+  function shortBase64(b64) {
+    if (!b64 || typeof b64 !== 'string') return '';
+    const comma = b64.indexOf(',');
+    const payload = comma >= 0 ? b64.slice(comma + 1) : b64;
+    // pega pedaços iniciais e finais para reduzir colisões
+    return payload.slice(0, 60) + (payload.length > 120 ? payload.slice(-20) : '');
+  }
 
   // 🧱 Caixa de status flutuante
   function createBox(doc = document) {
-    let box = doc.getElementById("h5p-box");
+    let box = doc.getElementById('dex-box');
     if (!box) {
-      box = doc.createElement("div");
-      box.id = "h5p-box";
+      box = doc.createElement('div');
+      box.id = 'dex-box';
       Object.assign(box.style, {
-        position: "fixed", top: "60px", left: "20px", minWidth: "250px", maxWidth: "400px", background: "#2c3e50", color: "white",
-        border: "2px solid #34495e", borderRadius: "8px", padding: "8px 12px", fontSize: "13px", lineHeight: "1.4",
-        zIndex: "999999", boxShadow: "0 2px 8px rgba(0,0,0,0.3)"
+        position: 'fixed',
+        top: '60px',
+        left: '20px',
+        minWidth: '260px',
+        maxWidth: '420px',
+        background: '#1a1f2b',
+        color: '#fff',
+        border: '2px solid #2c3e50',
+        borderRadius: '10px',
+        padding: '8px 12px',
+        fontSize: '13px',
+        lineHeight: '1.4',
+        zIndex: '999999',
+        boxShadow: '0 0 15px rgba(0,0,0,0.4)',
+        cursor: 'move',
+        userSelect: 'none'
       });
+
+      let isDown = false, offsetX = 0, offsetY = 0;
+      box.addEventListener('mousedown', (e) => {
+        isDown = true;
+        offsetX = e.clientX - box.offsetLeft;
+        offsetY = e.clientY - box.offsetTop;
+      });
+      doc.addEventListener('mouseup', () => (isDown = false));
+      doc.addEventListener('mousemove', (e) => {
+        if (isDown) {
+          box.style.left = `${e.clientX - offsetX}px`;
+          box.style.top = `${e.clientY - offsetY}px`;
+        }
+      });
+
       doc.body.appendChild(box);
     }
     return box;
   }
 
-  // 🧩 Extração de respostas
+  // 🧩 Extração de respostas (agora com suporte a imagens base64)
   function extractRows(doc = document) {
     const rows = [];
+
+    const extractImgFromHtml = (html) => {
+      try {
+        if (!html || typeof html !== 'string') return '';
+        // procura data:image/...;base64,AAA...
+        const m = html.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/);
+        if (m) return m[0];
+        // também tenta extrair src de <img src="...">
+        const imgMatch = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+        if (imgMatch) return imgMatch[1];
+        return '';
+      } catch (e) { return ''; }
+    };
 
     const pushFromParams = (raw) => {
       const p = pullParams(raw || {});
@@ -55,11 +130,17 @@
       const answers = Array.isArray(p.answers) ? p.answers : [];
       answers.forEach((a, idx) => {
         const correct = a.correct === true || a.isCorrect === true || a.correctAnswer === true;
+        // extrai texto e imagem (se existir)
+        const rawHtml = a.text || a.label || a.content || "";
+        const text = clean(rawHtml);
+        const img = extractImgFromHtml(rawHtml);
         rows.push({
           question,
           idx,
           letter: String.fromCharCode(65 + idx),
-          text: clean(a.text || a.label || a.content || ""),
+          text,
+          img, // url ou data:image...
+          imgHash: img ? shortBase64(img) : '',
           correct,
           type: "H5P.MultiChoice"
         });
@@ -80,23 +161,32 @@
     const H5P = doc.defaultView?.H5P;
     if (H5P && Array.isArray(H5P.instances)) {
       H5P.instances.forEach((inst) => {
-        const lib = inst.libraryInfo?.machineName || inst.library?.machineName || inst?.constructor?.name;
-        if (["H5P.MultiChoice", "H5P.SingleChoice"].includes(lib)) {
-          const params = inst.options || inst.params || inst.contentData?.params || {};
-          pushFromParams(params);
-        }
+        try {
+          const lib = inst.libraryInfo?.machineName || inst.library?.machineName || inst?.constructor?.name;
+          if (["H5P.MultiChoice", "H5P.SingleChoice"].includes(lib)) {
+            const params = inst.options || inst.params || inst.contentData?.params || {};
+            pushFromParams(params);
+          }
+        } catch (e) { /* ignore instance parse errors */ }
       });
     }
 
-    // Adição de suporte a <li class="h5p-sc-alternative ...">
+    // Adição de suporte a <li class="h5p-sc-alternative ..."> (DOM)
     doc.querySelectorAll("li.h5p-sc-alternative").forEach((li, i) => {
       const correct = li.classList.contains("h5p-sc-is-correct");
+      const rawHtml = li.innerHTML || li.textContent || '';
+      // pega imagem se existir
+      const imgNode = li.querySelector('img');
+      const img = imgNode ? (imgNode.src || '') : (rawHtml.includes('data:image') ? (rawHtml.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/)?.[0]||'') : '');
       rows.push({
         question: "SingleChoice (DOM)",
         idx: i,
         letter: String.fromCharCode(65 + i),
         text: clean(li.innerText || ""),
+        img,
+        imgHash: img ? shortBase64(img) : '',
         correct,
+        el: li, // guarda referência ao elemento DOM para clique direto
         type: "H5P.SingleChoice"
       });
     });
@@ -104,45 +194,125 @@
     return rows;
   }
 
-// 🧠 Marca respostas corretas automaticamente
-function autoAnswer(rows, doc = document) {
-  // Só executa se existir pelo menos uma alternativa com a classe correta
-  const correctEls = doc.querySelectorAll('.h5p-sc-alternative.h5p-sc-is-correct');
-  if (correctEls.length > 0) {
-    correctEls.forEach(el =>
-      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
-    );
-  }
+// ... (código anterior)
 
-  // Só clica no botão se ele existir
-  const checkBtn = doc.querySelector(".h5p-question-check-answer, .h5p-multi-choice-submit, .h5p-sc-next");
-  if (checkBtn && !checkBtn.disabled) {
-    checkBtn.click();
-  }
-}
+  // 🧠 Marca respostas corretas automaticamente (agora com matching por índice, imagem e texto)
+  function autoAnswer(rows, doc = document) {
+    // Se tiver dados vindos do extractRows()
+    if (rows && rows.length > 0) {
+      rows
+        .filter(r => r.correct)
+        .forEach(r => {
+          let matched = false;
+          const alternatives = Array.from(doc.querySelectorAll('.h5p-sc-alternative, .h5p-answer, li[role="radio"], .h5p-single-choice-wrapper ul > li'));
 
+          // 1) ⚡ PRIORIDADE: Match por ÍNDICE (O mais rápido e robusto)
+          if (r.idx !== undefined && alternatives.length > r.idx) {
+            const el = alternatives[r.idx];
+            if (el && el instanceof Element) {
+              el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+              matched = true;
+            }
+          }
+
+          // 2) 🖼️ FALLBACK: Match por IMAGEM/Base64 (Se falhou por índice)
+          if (!matched && r.imgHash) {
+            const imgs = Array.from(doc.querySelectorAll('.h5p-sc-alternative, .h5p-answer, li, img'));
+            for (const candidate of imgs) {
+              try {
+                // Se for <img> direto
+                if (candidate.tagName && candidate.tagName.toLowerCase() === 'img') {
+                  const src = candidate.src || '';
+                  if (src && shortBase64(src) === r.imgHash) { candidate.click(); matched = true; break; }
+                } else {
+                  // procurar img dentro do candidate
+                  const imgNode = candidate.querySelector && candidate.querySelector('img');
+                  const src = imgNode ? imgNode.src : (candidate.innerHTML || '').match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/)?.[0] || '';
+                  if (src && shortBase64(src) === r.imgHash) { candidate.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true })); matched = true; break; }
+                }
+              } catch (e) {}
+            }
+          }
+
+          // 3) 📄 ÚLTIMO FALLBACK: Match por TEXTO (Menos confiável)
+          if (!matched && r.text) {
+            const el = alternatives
+              .find(e => {
+                try {
+                  const t = e.innerText || '';
+                  // A busca deve ser feita pelo texto limpo da resposta no JSON/API
+                  return t && normalize(t).includes(normalize(r.text));
+                } catch (e) { return false; }
+              });
+            if (el) {
+              el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+              matched = true;
+            }
+          }
+
+          // Log de resultado
+          if (!matched) {
+            console.warn(`⚠️ Não achou alternativa: [${r.idx}] ${r.text || r.imgHash}`);
+          } else {
+            console.log(`✅ Marcou correta (Match: ${r.idx !== undefined ? 'Índice' : r.imgHash ? 'Imagem' : 'Texto'}): ${r.text || r.imgHash}`);
+          }
+        });
+    }
+
+    // Caso ainda exista .h5p-sc-is-correct no DOM, garante o clique
+    const correctEls = doc.querySelectorAll('.h5p-sc-alternative.h5p-sc-is-correct, .h5p-answer.correct');
+    if (correctEls.length > 0) {
+      correctEls.forEach(el =>
+        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      );
+    }
+
+    // Só clica no botão se ele existir
+    const checkBtn = doc.querySelector(".h5p-question-check-answer, .h5p-multi-choice-submit, .h5p-sc-next, button[data-check], button[type='submit']");
+    if (checkBtn && !checkBtn.disabled) {
+      try { checkBtn.click(); } catch (e) {}
+    }
+  }
 
   // ▶️ Clicar no botão Avançar
   function autoClickNext(doc = document) {
-    if (!responded(doc)) return;
+    // responded() pode não existir no teu script; considera remover ou substituir com verificação simples
+    // if (!responded(doc)) return;
     const nextBtn = Array.from(
-      doc.querySelectorAll("button.nui-button.nui-button-medium.nui-button-curved.nui-button-solid.nui-button-primary")
-    ).find(b => !b.innerText.toLowerCase().includes("avaliar") && !b.innerText.toLowerCase().includes("experiência"));
+      doc.querySelectorAll("button.nui-button.nui-button-medium.nui-button-curved.nui-button-solid.nui-button-primary, button")
+    ).find(b => {
+      try {
+        const txt = (b.innerText || '').toLowerCase();
+        if (!txt) return false;
+        if (txt.includes("avaliar") || txt.includes("experiência")) return false;
+        return /avançar|próxima|próximo|continuar|next|prosseguir|seguinte|concluir|finalizar|enviar|avancar/i.test(txt);
+      } catch (e) { return false; }
+    });
 
     if (nextBtn && !nextBtn.disabled) {
       console.log("▶️ Clicando no botão Avançar (filtrado)");
-      nextBtn.click();
+      try { nextBtn.click(); } catch (e) {
+        // fallback: despacha eventos simulados
+        ["mousedown","mouseup","click"].forEach(evt => nextBtn.dispatchEvent(new MouseEvent(evt, { bubbles: true, cancelable: true })));
+      }
     }
   }
 
   function clickInitialAdvance(doc = document) {
     const btn = Array.from(
-      doc.querySelectorAll("button.nui-button.nui-button-medium.nui-button-curved.nui-button-solid.nui-button-primary")
-    ).find(b => !b.innerText.toLowerCase().includes("avaliar") && !b.innerText.toLowerCase().includes("experiência"));
+      doc.querySelectorAll("button.nui-button.nui-button-medium.nui-button-curved.nui-button-solid.nui-button-primary, button")
+    ).find(b => {
+      try {
+        const txt = (b.innerText || '').toLowerCase();
+        if (!txt) return false;
+        if (txt.includes("avaliar") || txt.includes("experiência")) return false;
+        return /avançar|próxima|próximo|continuar|next|prosseguir|seguinte|concluir|finalizar|enviar|avancar/i.test(txt);
+      } catch (e) { return false; }
+    });
 
     if (btn && !btn.disabled) {
       console.log("▶️ Clicando no botão inicial Avançar (filtrado)");
-      btn.click();
+      try { btn.click(); } catch (e) {}
       return true;
     }
     return false;
@@ -160,14 +330,13 @@ function autoAnswer(rows, doc = document) {
     }
 
     autoAnswer(rows, doc);
-    setTimeout(() => autoClickNext(doc), 1500);
+    setTimeout(() => autoClickNext(doc), 700);
 
-    // Ordenar as respostas por letra (A, B, C, D) para garantir que fiquem organizadas
-    rows.sort((a, b) => ['A', 'B', 'C', 'D'].indexOf(a.letter) - ['A', 'B', 'C', 'D'].indexOf(b.letter));
-
+    rows.sort((a, b) => a.letter.localeCompare(b.letter));
     let html = "<b>✅ H5P Detectado:</b><br><table style='width:100%; font-size:12px;'>";
     rows.forEach((r) => {
-      html += `<tr><td>${r.correct ? "✅" : "❌"}</td><td>${r.letter})</td><td>${r.text}</td><td style="opacity:0.6;">(${r.type})</td></tr>`;
+      const dispText = r.text || (r.img ? `[imagem]` : '');
+      html += `<tr><td>${r.correct ? "✅" : "❌"}</td><td>${r.letter})</td><td>${dispText}</td><td style="opacity:0.6;">(${r.type})</td></tr>`;
     });
     html += "</table>";
     box.innerHTML = html;
